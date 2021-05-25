@@ -1,0 +1,583 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An AWS Serverless Specification template describing your function.
+Globals:
+  Function:
+    MemorySize: 3008
+    Timeout: 900
+    Layers:
+      - 'Fn::GetAtt':
+          - LambdaLayerApp
+          - Outputs.ByoalUtil
+Resources:
+  LambdaLayerApp:
+    Type: 'AWS::Serverless::Application'
+    Properties:
+      Location: ./lambda_layer_template.yml
+
+  PerformActiveLearning:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function generates auto annotatations and performs active
+        learning.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: ActiveLearning/perform_active_learning.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  ActiveLearningLoop:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn:
+        Fn::GetAtt:
+        - StatesExecutionRole
+        - Arn
+      DefinitionString:
+        Fn::Sub: "{  \n  \"Comment\": \"Active learning loop state machine. This state
+          machine contains the Active Learning statemachine and other lambdas to orchestrate
+          the process.\",\n  \"StartAt\": \"CopyInputManifest\",\n  \"States\": {\n
+          \   \"CopyInputManifest\": {\n      \"Type\": \"Task\",\n      \"Parameters\":
+          {\n        \"ManifestS3Uri.$\": \"$.InputConfig.DataSource.S3DataSource.ManifestS3Uri\",\n
+          \       \"S3OutputPath.$\": \"$.OutputConfig.S3OutputPath\"\n      },\n
+          \     \"Resource\": \"${CopyInputManfiest.Arn}\",\n      \"ResultPath\":
+          \"$.meta_data\",\n      \"Next\": \"AddRecordId\"\n    },\n    \"AddRecordId\":
+          {\n      \"Type\": \"Task\",\n      \"Parameters\": {\n        \"ManifestS3Uri.$\":
+          \"$.meta_data.IntermediateManifestS3Uri\"\n      },\n      \"Resource\":
+          \"${AddRecordId.Arn}\",\n      \"ResultPath\": null,\n      \"Next\": \"GetCounts\"\n
+          \   },\n    \"GetCounts\": {\n      \"Type\": \"Task\",\n      \"Parameters\":
+          {\n        \"LabelAttributeName.$\": \"$.LabelAttributeName\",\n        \"meta_data.$\":
+          \"$.meta_data\"\n      },\n      \"Resource\": \"${GetCounts.Arn}\",\n      \"ResultPath\":
+          \"$.meta_data.counts\",\n      \"Next\": \"CheckForCompletion1\"\n    },\n
+          \   \"CheckForCompletion1\": {\n      \"Type\": \"Choice\",\n      \"Choices\":
+          [\n        {\n         \"Variable\": \"$.meta_data.counts.unlabeled\",\n
+          \        \"NumericGreaterThan\": 0,\n         \"Next\": \"ShouldStartActiveLearning\"\n
+          \       }\n        ],\n      \"Default\": \"PerformFinalExport\"\n    },\n
+          \   \"ShouldStartActiveLearning\": {\n      \"Type\": \"Choice\",\n      \"Choices\":
+          [\n       {\n         \"Variable\": \"$.meta_data.counts.human_label_percentage\",\n
+          \        \"NumericGreaterThanEquals\": 19,\n         \"Next\": \"StartActiveLearningExecution\"\n
+          \      }\n       ],\n       \"Default\": \"PrepareForHumanLabeling\"\n    },\n
+          \   \"StartActiveLearningExecution\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"arn:aws:states:::states:startExecution.sync\",\n      \"Parameters\":
+          {\n         \"StateMachineArn\": \"arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ActiveLearning-${AWS::StackName}\",\n
+          \        \"Input\": {\n            \"meta_data.$\": \"$.meta_data\",\n            \"LabelAttributeName.$\":
+          \"$.LabelAttributeName\",\n            \"LabelingJobNamePrefix.$\": \"$.LabelingJobNamePrefix\",\n
+          \           \"LabelCategoryConfigS3Uri.$\": \"$.LabelCategoryConfigS3Uri\",\n
+          \           \"RoleArn.$\": \"$.RoleArn\",\n            \"S3TempPath.$\":\"$.S3TempPath\",\n
+          \           \"PostProcessingJobUri.$\": \"$.PostProcessingJobUri\"\n         }\n
+          \     },\n      \"ResultPath\": \"$.active_learning_result\",\n      \"Next\":
+          \"UpdateMetaData\"\n      },\n        \"UpdateMetaData\": {\n      \"Type\":
+          \"Task\",\n      \"Resource\": \"${UpdateMetaData.Arn}\",\n      \"Parameters\":
+          {\n         \"active_learning_output.$\":\"$.active_learning_result.Output\"\n
+          \     },\n      \"ResultPath\": \"$.meta_data\",\n      \"Next\": \"CheckModelEvaluation\"\n
+          \   },\n      \n        \"CheckModelEvaluation\": {\n      \"Type\": \"Choice\",\n
+          \     \"Choices\": [\n        {\n          \"Variable\": \"$.meta_data.training_config.evaluation\",\n
+          \         \"NumericGreaterThan\": 0.3,\n          \"Next\": \"CheckForCompletion2\"\n
+          \       }],\n      \"Default\": \"PrepareForHumanLabeling\"\n    },\n\n
+          \   \"PrepareForHumanLabeling\": {\n      \"Type\": \"Task\",\n      \"Parameters\":
+          {\n         \"LabelingJobNamePrefix.$\":\"$.LabelingJobNamePrefix\",\n         \"LabelAttributeName.$\":\"$.LabelAttributeName\",\n
+          \        \"ManifestS3Uri.$\":\"$.meta_data.IntermediateManifestS3Uri\",\n
+          \        \"human_label_done_count.$\":\"$.meta_data.counts.human_label\",\n
+          \        \"input_total.$\":\"$.meta_data.counts.input_total\",\n         \"IntermediateFolderUri.$\":\"$.meta_data.IntermediateFolderUri\"\n
+          \     },\n      \"Resource\": \"${PrepareForHumanLabeling.Arn}\",\n      \"ResultPath\":
+          \"$.meta_data.human_label_config\",\n      \"Next\": \"CreateLabelingJob\"\n
+          \   },\n    \"CreateLabelingJob\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"arn:aws:states:::sagemaker:createLabelingJob.sync\",\n      \"Parameters\":
+          {\n        \"LabelingJobName.$\": \"$.meta_data.human_label_config.labeling_job_name\",\n
+          \       \"LabelAttributeName.$\": \"$.LabelAttributeName\",\n        \"HumanTaskConfig.$\":
+          \"$.HumanTaskConfig\",\n        \"RoleArn.$\": \"$.RoleArn\",\n        \"LabelCategoryConfigS3Uri.$\":
+          \"$.LabelCategoryConfigS3Uri\",\n        \"InputConfig\": {\n          \"DataAttributes.$\":
+          \"$.InputConfig.DataAttributes\",\n          \"DataSource\": {\n            \"S3DataSource\":
+          {\n              \"ManifestS3Uri.$\": \"$.meta_data.human_label_config.human_input_s3_uri\"\n
+          \            }\n          }\n         },\n         \"OutputConfig\": {\n
+          \          \"S3OutputPath.$\": \"$.meta_data.human_label_config.labeling_job_output_uri\"\n
+          \        }\n       },\n       \"ResultPath\":\"$.labeling_job_result\",\n
+          \      \"Next\": \"ExportPartialOutput\"\n    },\n    \"ExportPartialOutput\":
+          {\n      \"Type\": \"Task\",\n      \"Resource\": \"${ExportPartialOutput.Arn}\",\n
+          \     \"Parameters\": {\n        \"ManifestS3Uri.$\":\"$.meta_data.IntermediateManifestS3Uri\",\n
+          \       \"OutputS3Uri.$\": \"$.labeling_job_result.LabelingJobOutput.OutputDatasetS3Uri\"\n
+          \      },\n       \"ResultPath\": null,\n       \"Next\": \"GetCounts\"\n
+          \   },\n    \"CheckForCompletion2\": {\n      \"Type\": \"Choice\",\n      \"Choices\":
+          [\n        {\n         \"Variable\": \"$.meta_data.counts.selected\",\n
+          \        \"NumericGreaterThan\": 0,\n         \"Next\": \"PrepareForSelectedHumanLabeling\"\n
+          \       }\n        ],\n      \"Default\": \"PerformFinalExport\"\n    },\n
+          \   \"PrepareForSelectedHumanLabeling\": {\n      \"Type\": \"Pass\",\n
+          \     \"Parameters\": {\n         \"human_input_s3_uri.$\":\"$.meta_data.selections_s3_uri\",\n
+          \        \"labeling_job_name.$\":\"$.meta_data.selected_job_name\",\n         \"labeling_job_output_uri.$\":\"$.meta_data.selected_job_output_uri\"\n
+          \     },\n      \"ResultPath\": \"$.meta_data.human_label_config\",\n      \"Next\":
+          \"CreateLabelingJob\"\n    },\n    \"PerformFinalExport\": {\n      \"Type\":
+          \"Task\",\n      \"Resource\": \"${PerformFinalExport.Arn}\",\n      \"Parameters\":
+          {\n        \"ManifestS3Uri.$\":\"$.meta_data.IntermediateManifestS3Uri\",\n
+          \       \"FinalOutputS3Uri.$\": \"$.OutputConfig.S3OutputPath\"\n       },\n
+          \      \"ResultPath\": \"$.FinalManifestS3Uri\",\n       \"Next\": \"ConstructFinalResponse\"\n
+          \   },\n    \"ConstructFinalResponse\": {\n      \"Type\": \"Pass\",\n      \"Parameters\":
+          {\n          \"FinalManifestS3Uri.$\": \"$.FinalManifestS3Uri\",\n          \"TrainedModelArn.$\":
+          \"$.meta_data.model_output.TrainedModelArn\"\n      },\n      \"ResultPath\":
+          \"$\",\n      \"End\": true\n    }\n   }\n }\n"
+      StateMachineName:
+        Fn::Sub: ActiveLearningLoop-${AWS::StackName}
+  PrepareForTraining:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function sets up all the input parameters required for the
+        training job.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: ActiveLearning/prepare_for_training.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  CopyInputManfiest:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function does a copy of the input manifest to the a location
+        within the specified output path.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Bootstrap/copy_input_manifest.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  ActiveLearning:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn:
+        Fn::GetAtt:
+        - StatesExecutionRole
+        - Arn
+      DefinitionString:
+        Fn::Sub: "{\n  \"Comment\": \"Active Learning logic with training, inference
+          and predictions\",\n  \"StartAt\": \"ShouldCreateValidationSet\",\n  \"States\":
+          {\n    \"ShouldCreateValidationSet\": {\n      \"Type\": \"Choice\",\n      \"Choices\":
+          [\n        {\n          \"Variable\": \"$.meta_data.counts.validation\",\n
+          \         \"NumericGreaterThan\": 0,\n          \"Next\": \"PrepareForTraining\"\n
+          \       }\n      ],\n      \"Default\": \"CreateValidationSet\"\n    },\n
+          \   \"CreateValidationSet\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"${CreateValidationSet.Arn}\",\n      \"Parameters\": {\n        \"LabelAttributeName.$\":
+          \"$.LabelAttributeName\",\n        \"meta_data.$\": \"$.meta_data\"\n      },\n
+          \     \"ResultPath\": \"$.meta_data\",\n      \"Next\": \"PrepareForTraining\"\n
+          \   },\n    \"PrepareForTraining\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"${PrepareForTraining.Arn}\",\n      \"Parameters\": {\n        \"LabelingJobNamePrefix.$\":
+          \"$.LabelingJobNamePrefix\",\n        \"LabelAttributeName.$\": \"$.LabelAttributeName\",\n
+          \       \"ManifestS3Uri.$\": \"$.meta_data.IntermediateManifestS3Uri\",\n
+          \       \"meta_data.$\": \"$.meta_data\"\n      },\n      \"ResultPath\":
+          \"$.meta_data.training_config\",\n      \"Next\": \"CreateTrainingJob\"\n
+          \   },\n    \"CreateTrainingJob\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"arn:aws:states:::sagemaker:createTrainingJob.sync\",\n      \"Parameters\":
+          {\n        \"TrainingJobName.$\": \"$.meta_data.training_config.TrainingJobName\",\n
+          \       \"ResourceConfig.$\": \"$.meta_data.training_config.ResourceConfig\",\n
+          \       \"AlgorithmSpecification.$\": \"$.meta_data.training_config.AlgorithmSpecification\",\n
+          \       \"HyperParameters.$\": \"$.meta_data.training_config.HyperParameters\",\n
+          \       \"OutputDataConfig\": {\n          \"S3OutputPath.$\": \"$.meta_data.training_config.S3OutputPath\"\n
+          \       },\n        \"StoppingCondition\": {\n          \"MaxRuntimeInSeconds\":
+          432000\n        },\n        \"RoleArn.$\": \"$.RoleArn\",\n        \"InputDataConfig\":
+          [\n          {\n            \"ChannelName\": \"train\",\n            \"ContentType\":
+          \"application/x-recordio\",\n            \"InputMode\": \"Pipe\",\n            \"RecordWrapperType\":
+          \"RecordIO\",\n            \"DataSource\": {\n              \"S3DataSource\":
+          {\n                \"S3DataType\": \"AugmentedManifestFile\",\n                \"AttributeNames.$\":
+          \"$.meta_data.training_config.AttributeNames\",\n                \"S3Uri.$\":
+          \"$.meta_data.training_config.trainS3Uri\",\n                \"S3DataDistributionType\":
+          \"FullyReplicated\"\n              }\n            }\n          },\n          {\n
+          \           \"ChannelName\": \"validation\",\n            \"ContentType\":
+          \"application/x-recordio\",\n            \"InputMode\": \"Pipe\",\n            \"RecordWrapperType\":
+          \"RecordIO\",\n            \"DataSource\": {\n              \"S3DataSource\":
+          {\n                \"S3DataType\": \"AugmentedManifestFile\",\n                \"AttributeNames.$\":
+          \"$.meta_data.training_config.AttributeNames\",\n                \"S3Uri.$\":
+          \"$.meta_data.ValidationS3Uri\",\n                \"S3DataDistributionType\":
+          \"FullyReplicated\"\n              }\n            }\n          }\n        ]\n
+          \     },\n      \"ResultPath\": \"$.training_job_result\",\n      \"Next\":
+          \"SaveModel\"\n    },\n    \"SaveModel\": {\n      \"Type\": \"Task\",\n
+          \     \"Resource\": \"arn:aws:states:::sagemaker:createModel\",\n      \"Parameters\":
+          {\n        \"PrimaryContainer\": {\n          \"Image.$\": \"$.meta_data.training_config.AlgorithmSpecification.TrainingImage\",\n
+          \         \"Environment\": {},\n          \"ModelDataUrl.$\": \"$.training_job_result.ModelArtifacts.S3ModelArtifacts\"\n
+          \       },\n        \"ExecutionRoleArn.$\": \"$.RoleArn\",\n        \"ModelName.$\":
+          \"$.meta_data.training_config.TrainingJobName\"\n      },\n      \"ResultPath\":
+          \"$.save_model_result\",\n      \"Next\": \"GetModelEvaluation\"\n    },\n
+          \     \n      \"GetModelEvaluation\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"${GetModelEvaluation.Arn}\",\n      \"Parameters\": {\n        \"meta_data.$\":
+          \"$.meta_data\"\n      },\n      \"ResultPath\": \"$.meta_data\",\n      \"Next\":
+          \"IsEvaluationSatisfactory\"\n    },\n      \"IsEvaluationSatisfactory\":
+          {\n      \"Type\": \"Choice\",\n      \"Choices\": [\n        {\n          \"Variable\":
+          \"$.meta_data.training_config.evaluation\",\n          \"NumericGreaterThan\":
+          0.3,\n          \"Next\": \"PrepareForInference\"\n        }],\n      \"Default\":
+          \"FilterOutput\"\n    },\n     \n      \n      \n    \"PrepareForInference\":
+          {\n      \"Type\": \"Task\",\n      \"Resource\": \"${PrepareForInference.Arn}\",\n
+          \     \"Parameters\": {\n        \"LabelAttributeName.$\": \"$.LabelAttributeName\",\n
+          \      \"S3TempPath.$\":\"$.S3TempPath\",\n        \"meta_data.$\": \"$.meta_data\"\n
+          \     },\n      \"ResultPath\": \"$.meta_data\",\n      \"Next\": \"CopyImage\"\n
+          \   },\n      \n      \n   \"CopyImage\": {\n      \"Type\": \"Task\",\n
+          \     \"Resource\": \"${CopyImage.Arn}\",\n      \"TimeoutSeconds\": 900,\n
+          \     \"Parameters\": {\n        \"meta_data.$\": \"$.meta_data\",\n       \"S3TempPath.$\":\"$.S3TempPath\"\n
+          \     },\n      \"ResultPath\": \"$.meta_data\",\n      \"Next\": \"CreateTransformJob\"\n
+          \   },\n  \n      \"CreateTransformJob\": {\n      \"Type\": \"Task\",\n
+          \     \"Resource\": \"arn:aws:states:::sagemaker:createTransformJob.sync\",\n
+          \     \"Parameters\": {\n        \"BatchStrategy\": \"SingleRecord\",\n
+          \       \"ModelName.$\": \"$.meta_data.transform_config.ModelName\",\n   \"TransformJobName.$\":\"$.meta_data.transform_config.TransformJobName\",\n
+          \         \n        \"TransformInput\": {\n        \"DataSource\": {\n            \"S3DataSource\":
+          {\n                \"S3DataType\": \"S3Prefix\",\n                \"S3Uri.$\":
+          \"$.S3TempPath\"\n            }\n        },\n        \"ContentType\": \"application/x-image\",\n
+          \       \"SplitType\": \"None\",\n        \"CompressionType\": \"None\"\n
+          \   },\n\n    \"TransformOutput\": {\n            \"S3OutputPath.$\": \"$.meta_data.transform_config.S3OutputPath\"\n
+          \       },\n            \n        \"TransformResources\": {\n          \"InstanceCount\":
+          1,\n          \"InstanceType\": \"ml.c5.xlarge\"\n        }\n      },\n\n
+          \     \"ResultPath\": \"$.transform_job_result\",\n      \"Next\": \"Inference
+          post-processing step\"\n    },\n \"Inference post-processing step\": {\n
+          \       \"Type\": \"Task\",\n  \"Resource\": \"arn:aws:states:::sagemaker:createProcessingJob.sync\",\n
+          \ \"Parameters\": {\n    \"ProcessingJobName.$\": \"$.meta_data.transform_config.TransformJobName\",\n
+          \     \n    \"ProcessingInputs\": [\n          {\n            \"InputName\":
+          \"input-1\",\n            \"AppManaged\": \"false\",\n            \"S3Input\":
+          {\n              \"S3Uri.$\": \"$.meta_data.transform_config.S3OutputPath\",\n
+          \             \"LocalPath\": \"/opt/ml/processing/out_images\",\n              \"S3DataType\":
+          \"S3Prefix\",\n              \"S3InputMode\": \"File\",\n              \"S3DataDistributionType\":
+          \"FullyReplicated\",\n              \"S3CompressionType\": \"None\"\n            }\n
+          \         },\n          {\n            \"InputName\": \"input-2\",\n            \"AppManaged\":
+          \"false\",\n            \"S3Input\": {\n              \"S3Uri.$\": \"$.S3TempPath\",\n
+          \             \"LocalPath\": \"/opt/ml/processing/images\",\n              \"S3DataType\":
+          \"S3Prefix\",\n              \"S3InputMode\": \"File\",\n              \"S3DataDistributionType\":
+          \"FullyReplicated\",\n              \"S3CompressionType\": \"None\"\n            }\n
+          \         },\n          {\n            \"InputName\": \"input-3\",\n            \"AppManaged\":
+          \"false\",\n            \"S3Input\": {\n              \"S3Uri.$\": \"$.meta_data.UnlabeledS3Uri\",\n
+          \             \"LocalPath\": \"/opt/ml/processing/unlabeled_manifest\",\n
+          \             \"S3DataType\": \"S3Prefix\",\n              \"S3InputMode\":
+          \"File\",\n              \"S3DataDistributionType\": \"FullyReplicated\",\n
+          \             \"S3CompressionType\": \"None\"\n            }\n          },\n
+          \         {\n            \"InputName\": \"code\",\n            \"AppManaged\":
+          \"false\",\n            \"S3Input\": {\n              \"S3Uri.$\": \"$.PostProcessingJobUri\",\n
+          \             \"LocalPath\": \"/opt/ml/processing/input/code\",\n              \"S3DataType\":
+          \"S3Prefix\",\n              \"S3InputMode\": \"File\",\n              \"S3DataDistributionType\":
+          \"FullyReplicated\",\n              \"S3CompressionType\": \"None\"\n            }\n
+          \         }\n        ],\n        \"ProcessingOutputConfig\": {\n          \"Outputs\":
+          [\n            {\n              \"OutputName\": \"scored_data\",\n              \"AppManaged\":
+          \"false\",\n              \"S3Output\": {\n                \"S3Uri.$\":
+          \"$.meta_data.transform_config.S3OutputPath\",\n                \"LocalPath\":
+          \"/opt/ml/processing/output/\",\n                \"S3UploadMode\": \"EndOfJob\"\n
+          \             }\n            }\n          ]\n        },\n        \"AppSpecification\":
+          {\n          \"ImageUri\": \"683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:0.20.0-cpu-py3\",\n
+          \         \"ContainerEntrypoint\": [\n            \"python3\",\n            \"/opt/ml/processing/input/code/post_processing.py\"\n
+          \         ]\n        },\n        \"RoleArn\": \"arn:aws:iam::296512243111:role/sagemakerRole\",\n
+          \       \"ProcessingResources\": {\n          \"ClusterConfig\": {\n            \"InstanceCount\":
+          1,\n            \"InstanceType\": \"ml.m4.xlarge\",\n            \"VolumeSizeInGB\":
+          30\n          }\n        }\n      },\n\n      \"ResultPath\": \"$.transform_job_result\",\n
+          \     \"Next\": \"PerformActiveLearning\"\n    },\n    \"PerformActiveLearning\":
+          {\n      \"Type\": \"Task\",\n      \"Resource\": \"${PerformActiveLearning.Arn}\",\n
+          \     \"Parameters\": {\n        \"LabelingJobNamePrefix.$\": \"$.LabelingJobNamePrefix\",\n
+          \       \"LabelAttributeName.$\": \"$.LabelAttributeName\",\n        \"LabelCategoryConfigS3Uri.$\":
+          \"$.LabelCategoryConfigS3Uri\",\n        \"meta_data.$\": \"$.meta_data\"\n
+          \     },\n      \"ResultPath\": \"$.meta_data\",\n      \"Next\": \"ExportPartialOutput\"\n
+          \   },\n    \"ExportPartialOutput\": {\n      \"Type\": \"Task\",\n      \"Resource\":
+          \"${ExportPartialOutput.Arn}\",\n      \"Parameters\": {\n        \"ManifestS3Uri.$\":
+          \"$.meta_data.IntermediateManifestS3Uri\",\n        \"OutputS3Uri.$\": \"$.meta_data.autoannotations\"\n
+          \     },\n      \"ResultPath\": null,\n      \"Next\": \"SaveModelArnToMetaData\"\n
+          \   },\n    \"SaveModelArnToMetaData\": {\n      \"Type\": \"Pass\",\n      \"Parameters\":
+          {\n        \"TrainedModelArn.$\": \"$.save_model_result.ModelArn\"\n      },\n
+          \     \"ResultPath\": \"$.meta_data.model_output\",\n      \"Next\": \"FilterOutput\"\n
+          \   },\n    \"FilterOutput\": {\n      \"Type\": \"Pass\",\n      \"Parameters\":
+          {\n        \"meta_data.$\": \"$.meta_data\"\n      },\n      \"ResultPath\":
+          \"$\",\n      \"End\": true\n    }\n  }\n}"
+      StateMachineName:
+        Fn::Sub: ActiveLearning-${AWS::StackName}
+  CreateValidationSet:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This method selects 10% of the input manifest as validation and
+        creates an s3 file containing the validation objects.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: ActiveLearning/create_validation_set.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  AddRecordId:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function adds a sequential id to each record in the input
+        manifest.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Bootstrap/add_record_id.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  UpdateMetaData:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function is used to update the meta_data values based on active
+        learning ouput.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: MetaData/update.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  StatesExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      - arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess
+      - arn:aws:iam::aws:policy/CloudWatchEventsFullAccess
+      Policies:
+      - PolicyName: StatesExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}*
+            Effect: Allow
+          - Action:
+            - logs:*
+            Resource: arn:aws:logs:*:*:*
+            Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+              Fn::Sub: states.${AWS::Region}.amazonaws.com
+  ExportPartialOutput:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function is used to merge partial outputs to the manifest.
+        The result is uploaded to s3.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Output/export_partial.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+            - s3:ListBucket
+            Resource:
+            - arn:aws:s3:::*SageMaker*
+            - arn:aws:s3:::*Sagemaker*
+            - arn:aws:s3:::*sagemaker*
+            Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+  GetCounts:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function returns the counts of the labeling job records.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: MetaData/get_counts.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  PrepareForHumanLabeling:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: Creates input parameters required for the first human labeling
+        job.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Labeling/prepare_for_labeling.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  PrepareForInference:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function sets up all the input parameters required for the
+        transform job.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: ActiveLearning/prepare_for_inference.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  CheckModelEvaluation:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function sets up all the input parameters required for the
+        transform job.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Labeling/check_model_evaluation.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  GetModelEvaluation:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function sets gets the model evaluation
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Labeling/check_model_evaluation.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  CopyImage:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function sets copies the image to s3
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Labeling/copy_images.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
+  PerformFinalExport:
+    Type: AWS::Lambda::Function
+    Properties:
+      Layers:
+      - Fn::GetAtt:
+        - LambdaLayerApp
+        - Outputs.ByoalUtil
+      Description: This function is used to copy the final completed manifest to the
+        output location.
+      Tags:
+      - Value: SAM
+        Key: lambda:createdBy
+      MemorySize: 3008
+      Handler: Output/export_final.lambda_handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Timeout: 900
+      Runtime: python3.7
