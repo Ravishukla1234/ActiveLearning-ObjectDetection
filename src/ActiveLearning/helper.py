@@ -44,10 +44,13 @@ class SimpleActiveLearning:
        """
          generate the final output prediction with the label and confidence.
         """
-       prediction['labelling-job-clone']['annotations'] = prediction['annotations']     
+       #print(prediction['labelling-job-clone'])
+       prediction['labelling-job-clone']['annotations']= prediction['annotations'] 
+       #print(prediction['labelling-job-clone'])
+       #prediction['labelling-job-clone']['annotations'] = prediction['annotations']     
        return {'source-ref': source['source-ref'],
        'id': source['id'],
-       self.label_attribute_name: { prediction['labelling-job-clone']},
+       self.label_attribute_name: prediction['labelling-job-clone'],
         
        f'{self.label_attribute_name}-metadata':{"objects":[{"confidence": float(f'{margin: 1.2f}')}],
        "class-map":{"0":"bird"},
