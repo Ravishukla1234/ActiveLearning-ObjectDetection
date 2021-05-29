@@ -3,7 +3,11 @@
 <p>
 Active Learning is the process of labeling some fraction of unlabeled dataset by humans which is then fed into the training model. The model is then inferenced to label the remaining part of dataset and provide a confidence score on each of its record. A subset of records which are labeled with low confidence are provided to human for labeling, which is in turn used to retrain the model to improve its performance and label the remaining data which was previously labeled by the model with low confidence score. This loop goes on until entire data is labeled with high confidence score.
 </p>
+
+<p>
 In short, in active learning difficult data objects are sent to human workers to be annotated and easy data objects are automatically labeled with machine learning (automated labeling or auto-labeling).
+</p>
+
 <p>
 <b>Amazon SageMaker Ground Truth</b> can be easily and inexpensively used to build accurately labeled machine learning (ML) datasets. Active learning can be used with SageMaker Ground Truth to reduce the labeling cost. 
 This blog post can be used to  create an active learning workflow for object detection(bounding box) task using SageMaker in-built algorithm to run training and inference in that workflow. This example can be used as a starting point to perform active learning and auto annotation with a <b>custom labeling job</b>.
