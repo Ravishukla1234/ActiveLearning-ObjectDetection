@@ -1,4 +1,4 @@
-<h1>Object Detection Active Learning Workflow</h1>
+<h1>Amazon SageMaker custom object detection workflows with active learning</h1>
 
 <p>
 Active Learning is the process of labeling some fraction of unlabeled dataset by humans which is then fed into the training model. The model is then inferenced to label the remaining part of dataset and provide a confidence score on each of its record. A subset of records which are labeled with low confidence are provided to human for labeling, which is in turn used to retrain the model to improve its performance and label the remaining data which was previously labeled by the model with low confidence score. This loop goes on until entire data is labeled with high confidence score.
