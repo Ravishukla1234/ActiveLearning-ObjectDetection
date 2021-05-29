@@ -46,7 +46,7 @@ This post can be used to  create an active learning workflow for object detectio
     <li>On the AWS Lambda console, locate the Lambda function with the name <b>*-PrepareForTraining-<###></b> where * is the name you used when you launched your CloudFormation stack and -<###> is a list of letters and numbers.</li>
     <li>Identify the existing algorithm specification, which looks like the following code:</li>
         <img src = "docker.png"></img>
-    <li>Change the value of  <b>TrainingImage</b> key to training image uri of the sagemaker object detection model of your region. Check the following link to get the  training image uri:- <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-algo-docker-registry-paths.html ">Sagemaker-algo-docker-registry </a> </li>
+    <li>Change the value of  <b>TrainingImage</b> key to training image uri of the sagemaker object detection model of your region. Check the following link to get the  training image uri:- <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-algo-docker-registry-paths.html ">Sagemaker-algo-docker-registry</a>. After edit, save the lamda function and click on <b>deploy</b> button. </li> 
     <li>On the AWS Step Functions console, choose State Machines.</li>
     <li>Select the radio button near <b>ActiveLearning-*</b></li>
     <li>Choose <b> Edit.</b></li>
