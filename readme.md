@@ -33,9 +33,9 @@ This blog post can be used to  create an active learning workflow for object det
 
 <p>Use<code> active-learning-object-detection.ipynb</code> notebook in an Amazon SageMaker Jupyter notebook instance to create the resources needed in your active learning workflow
 </p>
-
+<h3>For launching the workflow in the region other than <code> us-east-1</code> </h3>
 <p>
- In the <code> active-learning-object-detection.ipynb</code> notebook, we have demonstrated to launch the stack in us-east-1 region, but if you want to use it in any other region, then perform the following necessary edits
+ In the <code> active-learning-object-detection.ipynb</code> notebook, we have demonstrated to launch the stack in  <code> us-east-1</code>  region, but if you want to use it in any other region, then perform the following necessary edits
 </p>
 
 <ol>
