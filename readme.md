@@ -10,7 +10,7 @@ In short, in active learning difficult data objects are sent to human workers to
 
 <p>
 <b>Amazon SageMaker Ground Truth</b> can be easily and inexpensively used to build accurately labeled machine learning (ML) datasets. Active learning can be used with SageMaker Ground Truth to reduce the labeling cost. 
-This blog post can be used to  create an active learning workflow for object detection(bounding box) task using SageMaker in-built algorithm to run training and inference in that workflow. This example can be used as a starting point to perform active learning and auto annotation with a <b>custom labeling job</b>.
+This post can be used to  create an active learning workflow for object detection(bounding box) task using SageMaker in-built algorithm to run training and inference in that workflow. This example can be used as a starting point to perform active learning and auto annotation with a <b>custom labeling job</b>.
 </p>
 
 <h3>Prerequisites and necessary setup</h3>
@@ -30,16 +30,16 @@ This blog post can be used to  create an active learning workflow for object det
 <li>AWSCloudFormationFullAccess</li>
 <li>AmazonS3FullAccess</li>
 </ul>
-<li>Ensure that CORS is enabled on the s3 bucket you are going to use. Else Private worker wounld not be able to perform the labeling job assigned. You can enable CORS in the s3 bucket by following the link <a href = "https://docs.aws.amazon.com/AmazonS3/latest/userguide/enabling-cors-examples.html"> Enable CORS</a>.</li>
+<li>Ensure that CORS is enabled on the s3 bucket you are going to use. Else Private worker would not be able to perform the labeling job assigned. You can enable CORS in the s3 bucket by following the link <a href = "https://docs.aws.amazon.com/AmazonS3/latest/userguide/enabling-cors-examples.html"> Enable CORS</a>.</li>
 <li>Install <a href = "https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html">AWS SAM CLI</a> in the notebook instance. </li>
 <li>Familiarity with Amazon SageMaker <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sms.html">labeling</a>, <a href = "https://docs.aws.amazon.com/sagemaker/latest/dg/train-model.html">training</a> and <a href= "https://docs.aws.amazon.com/sagemaker/latest/dg/batch-transform.html">batch transform</a>; <a href = "https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html"> AWS CloudFormation</a>; and <a href = "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html">Step Functions</a>.</li>
 </ul>
 
-<p>Use<code> active-learning-object-detection.ipynb</code> notebook in an Amazon SageMaker Jupyter notebook instance to create the resources needed in your active learning workflow
+<p>Use<code> active-learning-object-detection.ipynb</code> notebook in an Amazon SageMaker Jupyter notebook instance to create the resources needed in your active learning workflow.
 </p>
 <h3>For launching the workflow in the region other than <code> us-east-1</code> </h3>
 <p>
- In the <code> active-learning-object-detection.ipynb</code> notebook, we have demonstrated to launch the stack in  <code> us-east-1</code>  region, but if you want to use it in any other region, then perform the following necessary edits
+ In the <code> active-learning-object-detection.ipynb</code> notebook, we have demonstrated to launch the cloud formation stack in  <code> us-east-1</code>  region, but if you want to use it in any other region, then after launching the stack in your preferred region as mentioned in the notebook <code> active-learning-object-detection.ipynb</code>, perform the following necessary edits
 </p>
 
 <ol>
